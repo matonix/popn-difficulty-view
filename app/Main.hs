@@ -1,19 +1,27 @@
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE MultiWayIf #-}
 {-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE TypeApplications #-}
 
 import Control.Concurrent (threadDelay)
 import Control.Lens ((&), (...), (^.), (^..), (^?))
+import Data.Aeson (FromJSON, decodeFileStrict)
 import qualified Data.ByteString.Lazy as L
 import Data.Csv
   ( DefaultOrdered,
+    Options,
     ToField (toField),
-    ToNamedRecord,
+    ToNamedRecord (toNamedRecord),
+    defaultOptions,
     encodeDefaultOrderedByName,
+    fieldLabelModifier,
+    genericToNamedRecord,
   )
 import Data.Either (fromRight)
+import Data.HashMap.Strict (HashMap)
+import qualified Data.HashMap.Strict as M
+import Data.Maybe (fromMaybe)
 import Data.Text (Text)
 import qualified Data.Text as T
 import qualified Data.Text.Encoding as T
@@ -24,6 +32,7 @@ import GHC.Generics (Generic)
 import Network.HTTP.Conduit (simpleHttp)
 import System.Directory (doesFileExist)
 import Text.HTML.DOM (parseLBS)
+import Text.Pretty.Simple (pPrint)
 import Text.Printf (printf)
 import Text.XML (Element)
 import Text.XML.Lens
@@ -35,11 +44,6 @@ import Text.XML.Lens
     text,
     (...),
   )
-import Data.Aeson (decodeFileStrict)
-import Data.HashMap.Strict (HashMap)
-import qualified Data.HashMap.Strict as M
-import Text.Pretty.Simple (pPrint)
-import Data.Maybe (fromMaybe)
 
 -- ファイルが存在すれば読み込み、存在しなければダウンロードして保存
 fetchAndSaveUrl :: (String, String) -> Int -> IO L.ByteString
@@ -96,6 +100,7 @@ tableToSongs level header body
         (parseNotes notes)
         (parseDifficulty difficulty)
         T.empty
+        T.empty
     parse8col e = error $ show e ++ show (length e)
     parse7col [version, genre, title, bpm, time, notes, difficulty] =
       Song
@@ -110,6 +115,7 @@ tableToSongs level header body
         (parseTime time)
         (parseNotes notes)
         (parseDifficulty difficulty)
+        T.empty
         T.empty
     -- 今は単純に展開している部分が多いけど、それぞれ適切な値にパーズする予定
     parseVersion = parseTdOptSpanText
@@ -213,6 +219,14 @@ instance ToField Difficulty where
 
 type Attribute = Text
 
+type Clear = Text
+
+newtype FloatDiff = FloatDiff Double
+  deriving (Show, Generic)
+
+instance ToField FloatDiff where
+  toField (FloatDiff f) = toField @String (printf "%.3f" f)
+
 -- データ構造の定義
 data Song = Song
   { level :: Level,
@@ -226,7 +240,8 @@ data Song = Song
     time :: Time,
     notes :: Notes,
     difficulty :: Difficulty,
-    attribute :: Attribute
+    attribute :: Attribute,
+    clear :: Clear
   }
   deriving (Show, Generic)
 
@@ -245,7 +260,7 @@ retriveWikiLevels = do
   let all_songs = concat songs
   return all_songs
 
--- jsonファイルの読み込み
+-- 属性jsonファイルの読み込み
 pomizikuJSONLoad :: IO (HashMap Level (HashMap Title Attribute))
 pomizikuJSONLoad = do
   let file = "data/ポミジク属性メモ.json"
@@ -253,52 +268,94 @@ pomizikuJSONLoad = do
   let hmap = M.mapKeys (fst . fromRight (0 :: Int, T.empty) . T.decimal) json
   return hmap
 
-
 -- 出力用データ構造の定義
-data Song2 = Song2
-  { level2 :: Level,
-    version2 :: Version,
-    linkedGenre :: Text,
-    title2 :: Title,
-    minBpm :: Maybe Int,
-    maxBpm :: Maybe Int,
-    time2 :: Time,
-    notes2 :: Notes,
-    levelDiff :: Double,
-    difficulty2 :: Difficulty,
-    attribute2 :: Attribute
+data Output = Output
+  { _lv :: Level,
+    -- version2 :: Version,
+    _genre :: Text,
+    _title :: Title,
+    -- minBpm :: Maybe Int,
+    -- maxBpm :: Maybe Int,
+    -- time2 :: Time,
+    -- notes2 :: Notes,
+    _float :: FloatDiff,
+    _diff :: Difficulty,
+    _attr :: Attribute,
+    _clear :: Clear
   }
   deriving (Show, Generic)
 
-instance ToNamedRecord Song2
+instance ToNamedRecord Output
 
-instance DefaultOrdered Song2
+instance DefaultOrdered Output
 
-songToSong2 :: Song -> Song2
-songToSong2 (Song {..}) = Song2 {
-  level2 = level,
-  version2 = version,
-  linkedGenre = "<a href=\"https://popn.wiki/" <> path <> "\">" <> genre <> "</a>",
-  title2 = title,
-  minBpm = let Bpm b = bpm in fmap fst b,
-  maxBpm = let Bpm b = bpm in fmap snd b,
-  time2 = time,
-  notes2 = notes,
-  levelDiff = let Difficulty d = difficulty in  fromIntegral level + maybe 0.0 (\(_, m, _) -> m) d,
-  difficulty2 = difficulty,
-  attribute2 = attribute
-}
+songToOutput :: Song -> Output
+songToOutput (Song {..}) =
+  Output
+    { _lv = level,
+      -- version2 = version,
+      _genre = "<a href=\"https://popn.wiki/" <> path <> "\">" <> genre <> "</a>",
+      _title = title,
+      -- minBpm = let Bpm b = bpm in fmap fst b,
+      -- maxBpm = let Bpm b = bpm in fmap snd b,
+      -- time2 = time,
+      -- notes2 = notes,
+      _float = let Difficulty d = difficulty in FloatDiff $ fromIntegral level + maybe 0.0 (\(_, m, _) -> m) d,
+      _diff = difficulty,
+      _attr = attribute,
+      _clear = clear
+    }
+
+type Result = (Int, Int, Int)
+
+type ResultByDiff = (Result, Result, Result, Result)
+
+type Score = (Text, Text, Text, Int, ResultByDiff)
+
+data ScoresJSON = ScoresJSON
+  { profile :: [Text],
+    info :: [Text],
+    scores :: [Score]
+  }
+  deriving (Show, Generic)
+
+instance FromJSON ScoresJSON
+
+-- スコアjsonファイルの読み込み
+scoresJSONLoad :: IO ScoresJSON
+scoresJSONLoad = do
+  let file = "data/localStorage.json"
+  -- (Int, Int, Int) は (クリアランプ、スコアランプ、スコア)で、(4 = ◯クリア、6 = Bランク、スコア値) とか (-1 = 未プレイ, -1 = 未プレイ, 0) とか。
+  Just json <- decodeFileStrict @ScoresJSON file
+  return json
+
+scoresToClearMap :: ScoresJSON -> HashMap Genre Clear
+scoresToClearMap ScoresJSON {..} = M.fromList . concat . flip map scores $
+  \(_, genreText, _, _, (e, n, h, ex)) ->
+    [ (genreText `T.append` "(E)", getClear e),
+      (genreText `T.append` "(N)", getClear n),
+      (genreText `T.append` "(H)", getClear h),
+      (genreText `T.append` "(EX)", getClear ex)
+    ]
+  where
+    getClear (clear, _, _)
+      | clear == -1 = ""
+      | clear >= 4 = "y"
+      | otherwise = "n"
 
 main :: IO ()
 main = do
-  all_songs <- retriveWikiLevels
-  hmap <- pomizikuJSONLoad
-  let attr_all_songs = map (songToSong2 . \song -> fromMaybe song $ do
-        titles <- hmap M.!? level song
-        attribute <- titles M.!? title song
-        return $ song { attribute = attribute }
-        ) all_songs
-  -- print attr_all_songs
-  let csvData = encodeDefaultOrderedByName attr_all_songs
-  L.writeFile "data/view.csv" csvData
-
+  allSongs <- retriveWikiLevels
+  attrMap <- pomizikuJSONLoad
+  clearMap <- scoresToClearMap <$> scoresJSONLoad
+  let attrAllSongs =
+        flip map allSongs $ \song -> fromMaybe song $ do
+              titleMap <- attrMap M.!? level song
+              attribute <- titleMap M.!? title song
+              return $ song {attribute = attribute}
+  let clearAttrAllSongs =
+        flip map attrAllSongs $ \song -> fromMaybe song $ do
+              clear <- clearMap M.!? genre song
+              return $ song {clear = clear}
+  let csvData = encodeDefaultOrderedByName $ map songToOutput clearAttrAllSongs
+  L.writeFile "site/view.csv" csvData
