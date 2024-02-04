@@ -339,9 +339,9 @@ scoresToClearMap ScoresJSON {..} = M.fromList . concat . flip map scores $
     ]
   where
     getClear (clear, _, _)
-      | clear == -1 = ""
-      | clear >= 4 = "y"
-      | otherwise = "n"
+      | clear == -1 = "n"
+      | clear >= 4 = "c"
+      | otherwise = "f"
 
 main :: IO ()
 main = do
