@@ -321,13 +321,21 @@ data ScoresJSON = ScoresJSON
 
 instance FromJSON ScoresJSON
 
+snd5 :: (a, b, c, d, e) -> b
+snd5 (_, a, _, _, _) = a
+
+setSnd5 :: (a, b1, c, d, e) -> b2 -> (a, b2, c, d, e)
+setSnd5 (a, _, c, d, e) b = (a, b, c, d, e)
+
 -- スコアjsonファイルの読み込み
 scoresJSONLoad :: IO ScoresJSON
 scoresJSONLoad = do
   let file = "data/localStorage.json"
   -- (Int, Int, Int) は (クリアランプ、スコアランプ、スコア)で、(4 = ◯クリア、6 = Bランク、スコア値) とか (-1 = 未プレイ, -1 = 未プレイ, 0) とか。
   Just json <- decodeFileStrict @ScoresJSON file
-  return json
+  let ss = scores json
+  let ss' = head ss : zipWith (\x y -> setSnd5 x (if snd5 x == snd5 y then snd5 x <> "(UPPER)" else snd5 x)) (tail ss) ss
+  return json { scores = ss' }
 
 scoresToClearMap :: ScoresJSON -> HashMap Genre Clear
 scoresToClearMap ScoresJSON {..} = M.fromList . concat . flip map scores $

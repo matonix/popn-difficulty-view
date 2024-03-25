@@ -1,0 +1,20 @@
+[tool.poetry]
+name = "popn-difficulty-view"
+version = "0.1.0"
+description = ""
+authors = ["matonix <automatonix@gmail.com>"]
+readme = "README.md"
+packages = [{include = "popn_difficulty_view"}]
+
+[tool.poetry.dependencies]
+python = "^3.10"
+matplotlib = "^3.8.3"
+
+[tool.poetry.group.dev.dependencies]
+seaborn = "^0.13.2"
+pandas = "^2.2.1"
+ipykernel = "^6.29.3"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
