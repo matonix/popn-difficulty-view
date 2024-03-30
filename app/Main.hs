@@ -29,7 +29,7 @@ import Data.Text.Lazy.Builder.Int (decimal)
 import qualified Data.Text.Read as T
 import qualified Data.Vector as V
 import GHC.Generics (Generic)
-import HanZen
+import HanZen ( zenToHan )
 import Network.HTTP.Conduit (simpleHttp)
 import System.Directory (doesFileExist)
 import Text.HTML.DOM (parseLBS)
@@ -328,6 +328,7 @@ snd5 (_, a, _, _, _) = a
 setSnd5 :: (a, b1, c, d, e) -> b2 -> (a, b2, c, d, e)
 setSnd5 (a, _, c, d, e) b = (a, b, c, d, e)
 
+zenToHanT :: Text -> Text
 zenToHanT = T.pack . zenToHan . T.unpack
 
 -- スコアjsonファイルの読み込み
@@ -339,7 +340,7 @@ scoresJSONLoad = do
   let ss = scores json
   -- 公式サイト由来のデータはUPPERの区別がない。２つ連続している名前のうち後者をUPPERだと仮定して後処理をする
   -- また、公式サイト由来のデータの英数は全角と半角が混在している。ここでは半角に統一する
-  let ss' = head ss : zipWith (\x y -> setSnd5 x (zenToHanT (if snd5 x == snd5 y then snd5 x <> "(UPPER)" else snd5 x))) (tail ss) ss
+  let ss' = head ss : zipWith (\x y -> setSnd5 x (if T.strip (zenToHanT (snd5 x)) == T.strip (zenToHanT (snd5 y)) then T.strip (zenToHanT (snd5 x)) <> "(UPPER)" else T.strip (zenToHanT (snd5 x)))) (tail ss) ss
   return json { scores = ss' }
 
 scoresToClearMap :: ScoresJSON -> HashMap Genre Clear
